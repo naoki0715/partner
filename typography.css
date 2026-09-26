@@ -1,0 +1,12 @@
+@import url('https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;500;700;900&family=Outfit:wght@400;700;900&display=swap');
+:root{
+  --font-body:'Zen Kaku Gothic New', sans-serif;
+  --font-display-num:'Outfit', sans-serif;
+  --text-display:clamp(36px,4.5vw,64px);
+  --text-h1:44px;
+  --text-h2:32px;
+  --text-h3:22px;
+  --text-body:16px;
+  --text-small:14px;
+  --text-eyebrow:14px;
+}
