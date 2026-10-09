@@ -16,21 +16,24 @@
   'use strict';
 
   var CONFIG = {
-    formUrl: 'REPLACE_WITH_FORM_RESPONSE_URL',
+    formUrl: 'https://docs.google.com/forms/d/e/1FAIpQLSd5Np8OUyEJRBLLlTWOmR9ZG0h5IVFRtvoJkmFfnIPUYbZI5Q/formResponse',
     entries: {
-      company: 'entry.REPLACE', // 会社名
-      name: 'entry.REPLACE',    // お名前
-      email: 'entry.REPLACE',   // メールアドレス
-      phone: 'entry.REPLACE',   // 電話番号
-      type: 'entry.REPLACE'     // 種別（「資料請求」または「個別相談」）
+      company: 'entry.609139208',  // 会社名
+      name: 'entry.920544992',     // お名前
+      email: 'entry.1830845583',   // メールアドレス
+      phone: 'entry.985139572',    // 電話番号
+      type: 'entry.475408195'      // 種別（「資料請求」または「個別相談」）
     }
   };
+
+  var PRIVACY_URL = 'https://careecon-plus.com/privacy';
 
   var MESSAGES = {
     notReady: '現在フォームの準備中です。恐れ入りますが、しばらくしてからお試しください。',
     required: function (label) { return label + 'を入力してください。'; },
     email: 'メールアドレスの形式をご確認ください。',
     phone: '電話番号の形式をご確認ください。',
+    consent: 'プライバシーポリシーへの同意が必要です。チェックを入れてください。',
     network: '送信に失敗しました。通信環境をご確認のうえ、もう一度お試しください。',
     doneTitle: '送信が完了しました',
     doneBody: '担当より1営業日以内に、ご登録のメールアドレス宛にご連絡いたします。'
@@ -79,6 +82,47 @@
     var digits = values.phone.replace(/[^0-9０-９]/g, '');
     if (digits.length < 9 || digits.length > 15) return MESSAGES.phone;
     return null;
+  }
+
+  // 「プライバシーポリシーに同意のうえ送信」チェックボックスを、送信ボタンの直前に差し込む。
+  // フォーム部品（デザインシステム）は改造せず、表示されたフォームごとに後から追加する。
+  function ensureConsent() {
+    var forms = document.querySelectorAll('form');
+    for (var i = 0; i < forms.length; i++) {
+      var form = forms[i];
+      if (form.querySelector('[data-consent]')) continue;
+      var btn = form.querySelector('button[type="submit"]');
+      if (!btn || !form.querySelector('input[name]')) continue;
+
+      var label = document.createElement('label');
+      label.setAttribute('data-consent', '');
+      label.style.cssText = 'display:flex; align-items:flex-start; gap:8px; margin:4px 0 2px; color:#fff; font-family:var(--font-body); font-size:13px; line-height:1.6; cursor:pointer;';
+
+      var box = document.createElement('input');
+      box.type = 'checkbox';
+      box.name = 'privacy_consent';
+      box.style.cssText = 'width:16px; height:16px; margin:3px 0 0; flex-shrink:0; cursor:pointer; accent-color:var(--color-yellow-500);';
+      box.addEventListener('change', function () { clearError(this.form); });
+
+      var text = document.createElement('span');
+      var link = document.createElement('a');
+      link.href = PRIVACY_URL;
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      link.textContent = 'プライバシーポリシー';
+      link.style.cssText = 'color:#fff; text-decoration:underline;';
+      var tail = document.createTextNode('に同意のうえ送信 ');
+      var req = document.createElement('span');
+      req.textContent = '必須';
+      req.style.cssText = 'font-size:10px; font-weight:700; color:#fff; background:var(--color-red-600); padding:2px 6px; border-radius:3px; margin-left:4px; white-space:nowrap;';
+      text.appendChild(link);
+      text.appendChild(tail);
+      text.appendChild(req);
+
+      label.appendChild(box);
+      label.appendChild(text);
+      form.insertBefore(label, btn);
+    }
   }
 
   function messageEl(form) {
@@ -165,6 +209,12 @@
       showError(form, problem);
       return;
     }
+    ensureConsent();
+    var consent = form.querySelector('[data-consent] input');
+    if (!consent || !consent.checked) {
+      showError(form, MESSAGES.consent);
+      return;
+    }
     clearError(form);
 
     form.setAttribute('data-sending', '1');
@@ -178,4 +228,11 @@
       setBusy(form, false);
     });
   }, true);
+
+  // 初回表示と、モーダルなど後から現れるフォームの両方にチェックボックスを付ける
+  ensureConsent();
+  if (window.MutationObserver) {
+    new MutationObserver(ensureConsent).observe(document.documentElement, { childList: true, subtree: true });
+  }
+  document.addEventListener('DOMContentLoaded', ensureConsent);
 })();
