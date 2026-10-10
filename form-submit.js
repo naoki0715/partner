@@ -163,6 +163,16 @@
     done.appendChild(body);
     form.style.display = 'none';
     form.parentNode.insertBefore(done, form.nextSibling);
+
+    // 見出し側に「1営業日以内に連絡」の案内がある場合（個別相談モーダル）は、
+    // 完了メッセージと重複するので見出し側を隠す
+    var head = form.previousElementSibling;
+    if (head) {
+      var lines = head.querySelectorAll('p');
+      for (var i = 0; i < lines.length; i++) {
+        if (lines[i].textContent.indexOf('1営業日以内') !== -1) lines[i].style.display = 'none';
+      }
+    }
   }
 
   function setBusy(form, busy) {
