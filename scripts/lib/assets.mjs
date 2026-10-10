@@ -1,5 +1,5 @@
 // 記事の画像を取得して dist に保存する。
-// Notion が配信するファイルのURLは約1時間で失効するため、ビルド時に必ず手元へ保存する。
+// 記事に書かれた画像（リポジトリ内のファイル、または https の外部URL）を取得し、記事ごとのフォルダに保存する。
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -56,18 +56,21 @@ export function sniffImage(buf) {
 /**
  * 画像ストアを作る。
  * @param outDir     保存先ディレクトリ（絶対パス）
- * @param fixtureDir fixture:NAME 形式のURLを読むディレクトリ（テスト用。省略可）
+ * @param localDir   local:相対パス 形式の参照を読む基準ディレクトリ（記事の画像。省略可）
  * @param fetchImpl  テスト用に差し替え可能な fetch
  */
-export function createAssetStore({ outDir, fixtureDir, fetchImpl = fetch }) {
+export function createAssetStore({ outDir, localDir, fetchImpl = fetch }) {
   const cache = new Map();
 
   async function loadBytes(rawUrl) {
-    if (rawUrl.startsWith('fixture:')) {
-      if (!fixtureDir) throw new Error('fixture URL は fixtureDir が必要です');
-      const name = rawUrl.slice('fixture:'.length);
-      if (name.includes('..') || name.includes('/')) throw new Error('不正な fixture 名');
-      return fs.readFile(path.join(fixtureDir, name));
+    if (rawUrl.startsWith('local:')) {
+      if (!localDir) throw new Error('リポジトリ内の画像を読む設定がありません');
+      const root = path.resolve(localDir);
+      const file = path.resolve(root, rawUrl.slice('local:'.length));
+      if (!file.startsWith(root + path.sep)) throw new Error('記事フォルダの外にある画像は使えません');
+      const st = await fs.stat(file);
+      if (st.size > MAX_BYTES) throw new Error(`画像が大きすぎます (${st.size} bytes)`);
+      return fs.readFile(file);
     }
     const url = new URL(rawUrl);
     if (url.protocol !== 'https:') throw new Error(`https 以外の画像URLは取得しません: ${url.protocol}`);
@@ -82,10 +85,10 @@ export function createAssetStore({ outDir, fixtureDir, fetchImpl = fetch }) {
 
   /** 画像を保存し、{ file, width, height } を返す。file は outDir からの相対パス */
   async function save(rawUrl) {
-    // Notion の署名付きURLはクエリが毎回変わるため、パスまでを同一性の鍵にする
+    // 外部URLはクエリを除いたパスまでを同一性の鍵にする
     let key = rawUrl;
     try {
-      if (!rawUrl.startsWith('fixture:')) {
+      if (!rawUrl.startsWith('local:')) {
         const u = new URL(rawUrl);
         key = u.origin + u.pathname;
       }

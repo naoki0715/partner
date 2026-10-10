@@ -1,7 +1,7 @@
 // サイト全体のビルド。出力先は dist/（GitHub Pages にはこの中身を公開する）
 //
 //   1. 公開ファイル（HTML/JS/CSS/画像）を dist にコピー
-//   2. Notion の記事から、ブログの一覧・記事ページ・画像を生成
+//   2. content/blog/*.md の記事から、ブログの一覧・記事ページ・画像を生成
 //   3. LPに GA・canonical を反映
 //   4. LPをプリレンダリング（完成形のHTMLを埋め込む）
 //   5. sitemap.xml / feed.xml / robots.txt（SITE_URL がある場合）
@@ -9,25 +9,20 @@
 // 環境変数:
 //   SITE_URL             公開URL（例 https://partner.careecon-plus.com）。未設定なら canonical/sitemap等は作らない
 //   GA_MEASUREMENT_ID    GA4の測定ID（G-XXXXXXXXXX）。設定すると全ページに計測タグを入れる
-//   NOTION_TOKEN         Notion インテグレーションのトークン
-//   NOTION_DATABASE_ID   記事データベースのID
-//   NOTION_DATA_SOURCE_ID（任意）データソースを直接指定
-//   NOTION_VERSION       （任意）Notion-Version ヘッダー。既定 2025-09-03
-//   NOTION_FIXTURE       テスト用。Notionの代わりにこのJSONを読む
+//   CONTENT_DIR          記事フォルダ（既定 content/blog）
 //   SKIP_PRERENDER=1     プリレンダリングを省略（高速確認用）
 //   DIST_DIR             出力先（既定 dist）
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createAssetStore } from './lib/assets.mjs';
-import { selectArticles } from './lib/articles.mjs';
-import { firstParagraphText, renderBlocks } from './lib/blocks.mjs';
-import { createFixtureSource, createNotionSource } from './lib/notion.mjs';
+import { readArticleFiles, selectArticles } from './lib/articles.mjs';
+import { firstParagraphText, renderMarkdown } from './lib/markdown.mjs';
 import { prerenderLanding } from './prerender.mjs';
 import { buildFeed, buildRobots, buildSitemap } from './lib/seo.mjs';
 import { articlePage, blogIndexPage, FALLBACK_BASE, SITE_NAME } from './lib/templates.mjs';
 import { injectGa, isValidGaId } from './lib/tracking.mjs';
-import { copyPublicFiles } from './lib/util.mjs';
+import { copyPublicFiles, exists } from './lib/util.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -44,22 +39,22 @@ export function parseSiteUrl(value) {
 }
 
 /** ブログ（一覧・記事）を生成して、公開した記事のメタを返す */
-export async function buildBlog({ site, source, distDir, fixtureDir, log = console, now = new Date() }) {
-  const metas = selectArticles(await source.queryPages(), { now, warn: (m) => log.warn(`  ・${m}`) });
+export async function buildBlog({ site, contentDir, distDir, log = console, now = new Date() }) {
+  const metas = selectArticles(await readArticleFiles(contentDir), { now, warn: (m) => log.warn(`  ・${m}`) });
   const rendered = [];
   for (const meta of metas) {
     const dir = path.join(distDir, 'blog', meta.slug);
-    const assets = createAssetStore({ outDir: dir, fixtureDir });
+    const assets = createAssetStore({ outDir: dir, localDir: contentDir });
     const warn = (m) => log.warn(`  ・[${meta.title}] ${m}`);
-    const blocks = await source.listBlocks(meta.id);
-    const ctx = { source, assets, warn, headings: [] };
-    const html = await renderBlocks(blocks, ctx);
+    const ctx = { assets, warn, headings: [] };
+    const html = await renderMarkdown(meta.body, ctx);
     if (!html.trim()) warn('本文が空です');
-    meta.fallbackDescription = firstParagraphText(blocks);
-    if (!meta.description) warn('「概要」が未入力のため、本文の冒頭を説明文に使います');
-    if (meta.coverUrl) {
+    meta.fallbackDescription = firstParagraphText(html);
+    if (!meta.description) warn('summary（概要）が未入力のため、本文の冒頭を説明文に使います');
+    if (meta.coverRef) {
       try {
-        const cover = await assets.save(meta.coverUrl);
+        const ref = /^https:\/\//i.test(meta.coverRef) ? meta.coverRef : `local:${meta.coverRef.replace(/^\.\//, '')}`;
+        const cover = await assets.save(ref);
         meta.coverFile = cover.file;
         meta.coverW = cover.width;
         meta.coverH = cover.height;
@@ -110,19 +105,14 @@ export async function main({ env = process.env, log = console } = {}) {
   // 2. ブログ
   let articles = [];
   let blogOn = false;
-  if (env.NOTION_FIXTURE) {
-    const fixture = path.resolve(ROOT, env.NOTION_FIXTURE);
-    articles = await buildBlog({ site, source: await createFixtureSource(fixture), distDir, fixtureDir: path.join(path.dirname(fixture), 'images'), log });
+  const contentDir = path.resolve(ROOT, env.CONTENT_DIR || 'content/blog');
+  if (await exists(contentDir)) {
+    articles = await buildBlog({ site, contentDir, distDir, log });
     blogOn = true;
-  } else if (env.NOTION_TOKEN && env.NOTION_DATABASE_ID) {
-    // Notionに繋がらないときは例外で止める（空のブログで本番を上書きしないため）
-    const source = createNotionSource({ token: env.NOTION_TOKEN, databaseId: env.NOTION_DATABASE_ID, dataSourceId: env.NOTION_DATA_SOURCE_ID || undefined, version: env.NOTION_VERSION || undefined, log });
-    articles = await buildBlog({ site, source, distDir, log });
-    blogOn = true;
+    log.log(`2. ブログ生成: 公開記事 ${articles.length}件`);
   } else {
-    log.warn('2. ブログ: NOTION_TOKEN / NOTION_DATABASE_ID が未設定のため、ブログは生成しません');
+    log.warn(`2. ブログ: 記事フォルダ ${path.relative(ROOT, contentDir)} が無いため、ブログは生成しません`);
   }
-  if (blogOn) log.log(`2. ブログ生成: 公開記事 ${articles.length}件`);
 
   // 3. LP
   const indexPath = path.join(distDir, 'index.html');

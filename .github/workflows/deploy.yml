@@ -1,6 +1,6 @@
 name: Build & Deploy
 
-# main への push / 1時間ごと（Notionの新記事・予約公開を反映）/ 手動実行
+# main への push（記事の追加・更新）/ 1時間ごと（予約公開の記事を反映）/ 手動実行
 on:
   push:
     branches: [main]
@@ -33,9 +33,6 @@ jobs:
         env:
           SITE_URL: ${{ vars.SITE_URL }}
           GA_MEASUREMENT_ID: ${{ vars.GA_MEASUREMENT_ID }}
-          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
-          NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
-          NOTION_DATA_SOURCE_ID: ${{ vars.NOTION_DATA_SOURCE_ID }}
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist

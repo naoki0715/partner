@@ -1,148 +1,36 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import test from 'node:test';
-import { selectArticles, pageToMeta } from '../lib/articles.mjs';
-import { linkHref, renderBlocks, renderRichText } from '../lib/blocks.mjs';
-import { createNotionSource } from '../lib/notion.mjs';
-import { sniffImage } from '../lib/assets.mjs';
+import { fileToMeta, parseDate, parseFrontMatter, readArticleFiles, selectArticles } from '../lib/articles.mjs';
+import { createAssetStore, sniffImage } from '../lib/assets.mjs';
+import { firstParagraphText, renderMarkdown } from '../lib/markdown.mjs';
 import { buildSitemap } from '../lib/seo.mjs';
 import { gaTag, injectGa, isValidGaId } from '../lib/tracking.mjs';
 import { esc, safeUrl, toSlug } from '../lib/util.mjs';
+import { buildBlog } from '../build.mjs';
 
-const rt = (text, extra = {}) => ({ type: 'text', plain_text: text, href: extra.href ?? null, annotations: { bold: false, italic: false, strikethrough: false, underline: false, code: false, ...extra.ann }, text: { content: text } });
-const para = (...r) => ({ id: 'x', type: 'paragraph', has_children: false, paragraph: { rich_text: r } });
-const ctx = () => ({ source: { listBlocks: async () => [] }, assets: { save: async () => ({ file: 'a.png', width: 10, height: 20 }) }, warn: () => {}, headings: [] });
+const FIX = path.resolve(path.dirname(new URL(import.meta.url).pathname), '../fixtures/content/blog');
+const NOW = new Date('2026-10-10T00:00:00+09:00');
+const quiet = { log() {}, warn() {} };
+const mdCtx = (over = {}) => ({ assets: { save: async (ref) => ({ file: 'a.png', width: 10, height: 20, ref }) }, warn() {}, headings: [], ...over });
 
 test('esc: HTMLの特殊文字をエスケープする', () => {
   assert.equal(esc(`<a href="x">&'`), '&lt;a href=&quot;x&quot;&gt;&amp;&#39;');
 });
 
-test('safeUrl / linkHref: 危険なURLを除外する', () => {
+test('safeUrl: 危険なURLを除外する', () => {
   assert.equal(safeUrl('javascript:alert(1)'), '');
   assert.equal(safeUrl('JaVaScRiPt:alert(1)'), '');
   assert.equal(safeUrl('data:text/html,<script>'), '');
   assert.equal(safeUrl('https://example.com/a'), 'https://example.com/a');
-  assert.equal(linkHref('/abcdef0123'), '', 'Notion内部リンクは除外');
-  assert.equal(linkHref('mailto:a@example.com'), 'mailto:a@example.com');
-});
+  });
 
 test('toSlug: 半角英数とハイフンだけにする', () => {
   assert.equal(toSlug(' Construction DX_Guide '), 'construction-dx-guide');
   assert.equal(toSlug('建設DX'), 'dx');
   assert.equal(toSlug('建設'), '');
-});
-
-test('renderRichText: 装飾・リンク・エスケープ・改行', () => {
-  const html = renderRichText([rt('a<b', { ann: { bold: true } }), rt('\nx', { href: 'https://e.com', ann: { code: true } })]);
-  assert.match(html, /<strong>a&lt;b<\/strong>/);
-  assert.match(html, /<a href="https:\/\/e\.com" rel="noopener noreferrer" target="_blank"><code><br>x<\/code><\/a>/);
-  assert.doesNotMatch(renderRichText([rt('t', { href: 'javascript:alert(1)' })]), /<a /);
-});
-
-test('renderBlocks: 連続するリストを1つにまとめ、入れ子も扱う', async () => {
-  const kids = [{ id: 'c1', type: 'bulleted_list_item', has_children: false, bulleted_list_item: { rich_text: [rt('子')] } }];
-  const c = ctx();
-  c.source.listBlocks = async (id) => (id === 'p' ? kids : []);
-  const html = await renderBlocks(
-    [
-      { id: 'p', type: 'bulleted_list_item', has_children: true, bulleted_list_item: { rich_text: [rt('親')] } },
-      { id: 'q', type: 'bulleted_list_item', has_children: false, bulleted_list_item: { rich_text: [rt('次')] } },
-      { id: 'n', type: 'numbered_list_item', has_children: false, numbered_list_item: { rich_text: [rt('番号')] } },
-    ],
-    c,
-  );
-  assert.equal((html.match(/<ul>/g) || []).length, 2, '親のul + 入れ子のul');
-  assert.equal((html.match(/<ol>/g) || []).length, 1);
-  assert.match(html, /<li>親\n<ul>\n<li>子<\/li>\n<\/ul>\n<\/li>/);
-});
-
-test('renderBlocks: 見出しはh2から始まり、目次用に記録される', async () => {
-  const c = ctx();
-  const html = await renderBlocks([{ id: 'h', type: 'heading_1', has_children: false, heading_1: { rich_text: [rt('見出し')] } }], c);
-  assert.match(html, /<h2 id="h-1">見出し<\/h2>/);
-  assert.deepEqual(c.headings, [{ level: 2, id: 'h-1', text: '見出し' }]);
-});
-
-test('renderBlocks: コードはエスケープされ、言語名は安全な文字だけ', async () => {
-  const html = await renderBlocks([{ id: 'k', type: 'code', has_children: false, code: { rich_text: [rt('<script>1</script>')], language: 'java"><script>' } }], ctx());
-  assert.doesNotMatch(html, /<script>/);
-  assert.match(html, /class="language-javascript"|class="language-java/);
-});
-
-test('renderBlocks: 画像は取り込み先のファイル名とサイズ付きで出力。失敗時は警告して省略', async () => {
-  const img = { id: 'i', type: 'image', has_children: false, image: { type: 'external', external: { url: 'https://e.com/a.png' }, caption: [rt('図1')] } };
-  assert.match(await renderBlocks([img], ctx()), /<img src="a\.png" alt="図1" width="10" height="20" loading="lazy"/);
-  const warns = [];
-  const bad = ctx();
-  bad.assets.save = async () => {
-    throw new Error('boom');
-  };
-  bad.warn = (m) => warns.push(m);
-  assert.equal(await renderBlocks([img], bad), '');
-  assert.equal(warns.length, 1);
-});
-
-test('renderBlocks: 危険なブックマークは出力しない／不明ブロックは警告', async () => {
-  const warns = [];
-  const c = ctx();
-  c.warn = (m) => warns.push(m);
-  const html = await renderBlocks(
-    [
-      { id: 'b', type: 'bookmark', has_children: false, bookmark: { url: 'javascript:alert(1)', caption: [] } },
-      { id: 'u', type: 'mystery_block', has_children: false, mystery_block: {} },
-    ],
-    c,
-  );
-  assert.equal(html, '');
-  assert.equal(warns.length, 1);
-});
-
-test('renderBlocks: 表（見出し行つき）', async () => {
-  const c = ctx();
-  c.source.listBlocks = async () => [
-    { id: 'r1', type: 'table_row', table_row: { cells: [[rt('A')], [rt('B')]] } },
-    { id: 'r2', type: 'table_row', table_row: { cells: [[rt('1')], [rt('2')]] } },
-  ];
-  const html = await renderBlocks([{ id: 't', type: 'table', has_children: true, table: { has_column_header: true, has_row_header: false } }], c);
-  assert.match(html, /<thead><tr><th scope="col">A<\/th><th scope="col">B<\/th><\/tr><\/thead><tbody><tr><td>1<\/td><td>2<\/td><\/tr><\/tbody>/);
-});
-
-const page = (over = {}) => ({
-  object: 'page',
-  id: 'aaaaaaaa-0000-0000-0000-000000000000',
-  created_time: '2026-09-01T00:00:00.000Z',
-  last_edited_time: '2026-09-02T00:00:00.000Z',
-  archived: false,
-  in_trash: false,
-  cover: null,
-  properties: {
-    タイトル: { type: 'title', title: [rt('記事')] },
-    ステータス: { type: 'select', select: { name: '公開' } },
-    公開日: { type: 'date', date: { start: '2026-09-01' } },
-    スラッグ: { type: 'rich_text', rich_text: [rt('my-post')] },
-    ...over,
-  },
-});
-
-test('pageToMeta: 公開条件（ステータス・予約公開・ゴミ箱・タイトル）', () => {
-  const now = new Date('2026-10-10T00:00:00Z');
-  assert.ok(pageToMeta(page(), { now }).meta);
-  assert.ok(pageToMeta(page({ ステータス: { type: 'status', status: { name: '公開' } } }), { now }).meta, 'statusプロパティでも可');
-  assert.ok(pageToMeta(page({ ステータス: { type: 'select', select: { name: '下書き' } } }), { now }).skip);
-  assert.ok(pageToMeta(page({ 公開日: { type: 'date', date: { start: '2099-01-01' } } }), { now }).skip, '未来の公開日は非公開');
-  assert.ok(pageToMeta({ ...page(), archived: true }, { now }).skip);
-  assert.ok(pageToMeta(page({ タイトル: { type: 'title', title: [] } }), { now }).skip);
-});
-
-test('selectArticles: 新しい順・スラッグ重複の解消・スラッグ未入力の補完', () => {
-  const a = page();
-  const b = { ...page({ 公開日: { type: 'date', date: { start: '2026-09-05' } } }), id: 'bbbbbbbb-0000-0000-0000-000000000000' };
-  const c = { ...page({ スラッグ: { type: 'rich_text', rich_text: [] } }), id: 'cccccccc-0000-0000-0000-000000000000' };
-  const out = selectArticles([a, b, c], { now: new Date('2026-10-10T00:00:00Z') });
-  assert.equal(out.length, 3);
-  assert.ok(out.map((m) => m.slug).includes("my-post-2"), "重複スラッグには連番が付く");
-  assert.equal(new Set(out.map((m) => m.slug)).size, 3, 'スラッグはすべて異なる');
-  assert.ok(out[0].published >= out[1].published && out[1].published >= out[2].published, '新しい順');
-  assert.equal(out.find((m) => m.id.startsWith('cccc')).slug, 'post-cccccccc');
 });
 
 test('tracking: GA の形式チェックと差し込み（重複させない）', () => {
@@ -172,46 +60,117 @@ test('buildSitemap: LP・一覧・記事を含み、記事が無ければ一覧�
   assert.doesNotMatch(buildSitemap({ siteUrl: 'https://x.example', articles: [] }), /\/blog\//);
 });
 
-test('Notion クライアント: 新方式(data_sources)・旧方式・429の再試行・405でPATCH', async () => {
-  const calls = [];
-  const mk = (handler) =>
-    createNotionSource({
-      token: 't',
-      databaseId: 'db1',
-      log: { warn() {} },
-      fetchImpl: async (url, opt) => {
-        calls.push(`${opt.method} ${url.replace('https://api.notion.com/v1', '')}`);
-        return handler(url, opt);
-      },
-    });
-  const res = (status, json, headers = {}) => ({ status, ok: status < 300, headers: { get: (k) => headers[k.toLowerCase()] ?? null }, text: async () => JSON.stringify(json) });
+test('parseFrontMatter: 設定と本文を分け、壊れた設定はエラーにする', () => {
+  const ok = parseFrontMatter('---\ntitle: A\ntags: [x, y]\n---\n本文\n');
+  assert.equal(ok.data.title, 'A');
+  assert.deepEqual(ok.data.tags, ['x', 'y']);
+  assert.equal(ok.body, '本文\n');
+  assert.ok(parseFrontMatter('本文だけ').error);
+  assert.ok(parseFrontMatter('---\ntitle: [壊れた\n---\nx').error);
+  assert.equal(parseFrontMatter('\uFEFF---\r\ntitle: A\r\n---\r\nx').data.title, 'A', 'BOM・CRLFも可');
+});
 
-  // 新方式
-  let src = mk((url) => (url.endsWith('/databases/db1') ? res(200, { data_sources: [{ id: 'ds1', name: 'x' }] }) : res(200, { results: [{ object: 'page', id: 'p1' }], has_more: false })));
-  assert.equal((await src.queryPages()).length, 1);
-  assert.ok(calls.includes('POST /data_sources/ds1/query'));
+test('parseDate: 日付のみ・時刻付きは日本時間、タイムゾーン指定はそのまま', () => {
+  assert.equal(parseDate('2026-10-15').toISOString(), '2026-10-14T15:00:00.000Z');
+  assert.equal(parseDate('2026-10-15 10:30').toISOString(), '2026-10-15T01:30:00.000Z');
+  assert.equal(parseDate('2026-10-15T00:00:00Z').toISOString(), '2026-10-15T00:00:00.000Z');
+  assert.equal(parseDate('そのうち'), null);
+});
 
-  // 旧方式
-  calls.length = 0;
-  src = mk((url) => (url.endsWith('/databases/db1') ? res(200, { object: 'database' }) : res(200, { results: [], has_more: false })));
-  await src.queryPages();
-  assert.ok(calls.includes('POST /databases/db1/query'));
+const entry = (fm, body = '本文') => ({ file: 'x.md', text: `---\n${fm}\n---\n${body}` });
 
-  // 405 → PATCH
-  calls.length = 0;
-  let first = true;
-  src = mk((url, opt) => {
-    if (url.endsWith('/databases/db1')) return res(200, { data_sources: [{ id: 'ds1', name: 'x' }] });
-    if (opt.method === 'POST' && first) {
-      first = false;
-      return res(405, { code: 'invalid_request', message: 'method' });
-    }
-    return res(200, { results: [], has_more: false });
-  });
-  await src.queryPages();
-  assert.ok(calls.includes('PATCH /data_sources/ds1/query'));
+test('fileToMeta: 公開条件（draft・予約公開・必須項目）', () => {
+  assert.ok(fileToMeta(entry('title: A\ndate: 2026-10-01'), { now: NOW }).meta);
+  assert.ok(fileToMeta(entry('title: A\ndate: 2026-10-01\ndraft: true'), { now: NOW }).skip);
+  assert.ok(fileToMeta(entry('title: A\ndate: 2099-01-01'), { now: NOW }).skip, '未来の公開日は非公開');
+  assert.ok(fileToMeta(entry('title: A'), { now: NOW }).problem, 'dateなしは要修正');
+  assert.ok(fileToMeta(entry('date: 2026-10-01'), { now: NOW }).problem, 'titleなしは要修正');
+  assert.ok(fileToMeta(entry('title: A\ndate: あした'), { now: NOW }).problem);
+  const m = fileToMeta(entry('title: A\ndate: 2026-10-01\nupdated: 2026-09-01\ntags: タグ1、タグ2'), { now: NOW }).meta;
+  assert.equal(m.slug, 'x');
+  assert.deepEqual(m.tags, ['タグ1', 'タグ2']);
+  assert.ok(m.modified >= m.published, '更新日が公開日より前でも公開日に揃える');
+});
 
-  // エラーは握りつぶさず例外にする（空のブログで本番を上書きしないため）
-  src = mk(() => res(404, { code: 'object_not_found', message: 'shared?' }));
-  await assert.rejects(() => src.queryPages(), /object_not_found/);
+test('selectArticles: 新しい順・スラッグ重複の解消', () => {
+  const mk = (file, fm) => ({ file, text: `---\n${fm}\n---\nb` });
+  const out = selectArticles(
+    [mk('a.md', 'title: A\ndate: 2026-09-01\nslug: same'), mk('b.md', 'title: B\ndate: 2026-09-05\nslug: same'), mk('c.md', 'title: C\ndate: 2026-09-03')],
+    { now: NOW },
+  );
+  assert.deepEqual(out.map((m) => m.title), ['B', 'C', 'A']);
+  assert.deepEqual(out.map((m) => m.slug), ['same', 'c', 'same-2']);
+});
+
+test('renderMarkdown: 生HTMLは文字として表示・危険なリンクは除外・外部リンクはnoopener', async () => {
+  const html = await renderMarkdown('<script>alert(1)</script>\n\n[x](javascript:alert(1)) [y](https://e.com) <b onclick=1>z</b>', mdCtx());
+  assert.doesNotMatch(html, /<script|<b |href="javascript:/i);
+  assert.match(html, /&lt;script&gt;/);
+  assert.match(html, /<a href="https:\/\/e\.com" rel="noopener noreferrer" target="_blank">y<\/a>/);
+});
+
+test('renderMarkdown: 見出しはh2〜h4に揃え、h2を目次用に記録', async () => {
+  const c = mdCtx();
+  const html = await renderMarkdown('# 大\n\n## 中\n\n### 小\n\n##### 最小', c);
+  assert.match(html, /<h2 id="h-1">大<\/h2>/);
+  assert.match(html, /<h2 id="h-2">中<\/h2>/);
+  assert.match(html, /<h3 id="h-3">小<\/h3>/);
+  assert.match(html, /<h4 id="h-4">最小<\/h4>/);
+  assert.deepEqual(c.headings.map((h) => h.text), ['大', '中']);
+});
+
+test('renderMarkdown: 画像は取り込み先ファイル名とサイズ付き。使えない参照・失敗は文字に置き換えて警告', async () => {
+  const refs = [];
+  const warns = [];
+  const c = mdCtx({ assets: { save: async (r) => (refs.push(r), { file: 'a.png', width: 10, height: 20 }) }, warn: (m) => warns.push(m) });
+  const html = await renderMarkdown('![図1](images/a.png) ![外](https://e.com/b.png) ![bad](http://e.com/c.png) ![abs](/etc/passwd) ![d](data:image/png;base64,AAAA)', c);
+  assert.deepEqual(refs, ['local:images/a.png', 'https://e.com/b.png']);
+  assert.match(html, /<img src="a\.png" alt="図1" width="10" height="20" loading="lazy"/);
+  assert.equal(warns.length, 3);
+  const failing = mdCtx({ assets: { save: async () => { throw new Error('boom'); } }, warn: (m) => warns.push(m) });
+  assert.doesNotMatch(await renderMarkdown('![代替](x.png)', failing), /<img/);
+});
+
+test('renderMarkdown: 表はスクロール用のラッパーで包む／firstParagraphText', async () => {
+  const html = await renderMarkdown('導入 **文**\n\n| A | B |\n|---|---|\n| 1 | 2 |', mdCtx());
+  assert.match(html, /<div class="table-wrap"><table>/);
+  assert.equal(firstParagraphText(html), '導入 文');
+});
+
+test('assets: 記事フォルダの外の画像・SVG・巨大でない不正ファイルは拒否', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'blog-'));
+  await fs.writeFile(path.join(dir, 'ok.svg'), '<svg xmlns="http://www.w3.org/2000/svg"></svg>');
+  await fs.writeFile(path.join(dir, 'x.png'), 'not an image');
+  const store = createAssetStore({ outDir: path.join(dir, 'out'), localDir: dir });
+  await assert.rejects(() => store.save('local:../../etc/passwd'), /外にある/);
+  await assert.rejects(() => store.save('local:ok.svg'), /SVG/);
+  await assert.rejects(() => store.save('local:x.png'), /画像として認識/);
+  await assert.rejects(() => store.save('http://e.com/a.png'), /https 以外/);
+});
+
+test('buildBlog: サンプル記事から一覧・記事ページを生成し、画像を取り込む', async () => {
+  const dist = await fs.mkdtemp(path.join(os.tmpdir(), 'dist-'));
+  const site = { siteUrl: 'https://x.example', gaId: '' };
+  const articles = await buildBlog({ site, contentDir: FIX, distDir: dist, log: quiet, now: NOW });
+  assert.deepEqual(articles.map((a) => a.slug).sort(), ['construction-dx-3-points', 'construction-dx-3-points-2', 'no-slug-summary'].sort());
+  const page = await fs.readFile(path.join(dist, 'blog/construction-dx-3-points/index.html'), 'utf8');
+  assert.match(page, /BlogPosting/);
+  assert.match(page, /rel="canonical" href="https:\/\/x\.example\/blog\/construction-dx-3-points\/"/);
+  assert.doesNotMatch(page, /<script>alert|href="javascript:/);
+  const files = await fs.readdir(path.join(dist, 'blog/construction-dx-3-points'));
+  assert.ok(files.some((f) => f.endsWith('.png')), '画像が記事フォルダに入る');
+  const index = await fs.readFile(path.join(dist, 'blog/index.html'), 'utf8');
+  assert.doesNotMatch(index, /下書きの記事|予約公開の記事|公開日がない記事|無視される/);
+});
+
+test('readArticleFiles: _ で始まるファイルと README は読まない', async () => {
+  const names = (await readArticleFiles(FIX)).map((e) => e.file);
+  assert.ok(!names.includes('_ignored.md'));
+  assert.ok(names.includes('construction-dx-guide.md'));
+});
+
+test('renderMarkdown: 日本語の文中でも **強調** が効く', async () => {
+  const html = await renderMarkdown('現場の**“当たり前”**を変える。これは**（注意）**です', mdCtx());
+  assert.match(html, /<strong>“当たり前”<\/strong>を/);
+  assert.match(html, /<strong>（注意）<\/strong>です/);
 });
