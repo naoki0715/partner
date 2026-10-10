@@ -1,0 +1,23 @@
+{
+  "name": "careecon-partner-lp",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "CAREECON+ パートナー募集LP（プリレンダリング＋Markdownブログのビルド）",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "build:fixture": "CONTENT_DIR=scripts/fixtures/content/blog node scripts/build.mjs",
+    "test": "node --test scripts/test/*.test.mjs"
+  },
+  "devDependencies": {
+    "playwright": "1.56.0"
+  },
+  "dependencies": {
+    "markdown-it": "15.0.2",
+    "markdown-it-cjk-friendly": "3.0.0",
+    "yaml": "2.9.1"
+  }
+}
