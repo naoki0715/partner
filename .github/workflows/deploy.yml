@@ -1,0 +1,57 @@
+name: Build & Deploy
+
+# main への push / 1時間ごと（Notionの新記事・予約公開を反映）/ 手動実行
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: '17 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npx playwright install --with-deps chromium
+      - name: Build
+        run: node scripts/build.mjs
+        env:
+          SITE_URL: ${{ vars.SITE_URL }}
+          GA_MEASUREMENT_ID: ${{ vars.GA_MEASUREMENT_ID }}
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
+          NOTION_DATA_SOURCE_ID: ${{ vars.NOTION_DATA_SOURCE_ID }}
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    # リポジトリ変数 ACTIONS_DEPLOY が 'true' で、PR以外のときだけ公開する
+    # （Pagesの公開元を「GitHub Actions」に切り替えてから true にする）
+    if: ${{ vars.ACTIONS_DEPLOY == 'true' && github.event_name != 'pull_request' }}
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
