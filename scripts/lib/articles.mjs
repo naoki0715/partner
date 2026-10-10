@@ -5,6 +5,7 @@
 //   title: 記事タイトル            必須
 //   date: 2026-10-15              必須。公開日。未来の日付は、その日になるまで公開されない（予約公開）
 //   summary: 検索結果に出る説明文    推奨（120文字程度）
+//   seo_title: 検索結果のタイトル   任意。省略すると「title｜サイト名」
 //   slug: construction-dx-guide   任意。URLの一部（半角英数とハイフン）。省略するとファイル名
 //   category: 建設DX               任意
 //   tags: [建設DX, 中小企業]        任意
@@ -73,6 +74,7 @@ export function fileToMeta({ file, text }, { now = new Date() } = {}) {
       slugWasInvalid: !slug,
       published,
       modified: modified < published ? published : modified,
+      seoTitle: str(data.seo_title),
       description: str(data.summary ?? data.description),
       category: str(data.category),
       tags: list(data.tags),

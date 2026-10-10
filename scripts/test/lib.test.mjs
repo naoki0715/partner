@@ -88,6 +88,7 @@ test('fileToMeta: 公開条件（draft・予約公開・必須項目）', () => 
   assert.ok(fileToMeta(entry('title: A\ndate: あした'), { now: NOW }).problem);
   const m = fileToMeta(entry('title: A\ndate: 2026-10-01\nupdated: 2026-09-01\ntags: タグ1、タグ2'), { now: NOW }).meta;
   assert.equal(m.slug, 'x');
+  assert.equal(fileToMeta(entry('title: A\ndate: 2026-10-01\nseo_title: 検索用タイトル'), { now: NOW }).meta.seoTitle, '検索用タイトル');
   assert.deepEqual(m.tags, ['タグ1', 'タグ2']);
   assert.ok(m.modified >= m.published, '更新日が公開日より前でも公開日に揃える');
 });

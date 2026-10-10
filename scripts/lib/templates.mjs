@@ -140,7 +140,7 @@ ${ctaBand(rootRel)}`;
 
 export function articlePage({ site, article, html, headings, related }) {
   const rootRel = '../../';
-  const title = `${article.title}｜${SITE_NAME}`;
+  const title = article.seoTitle || `${article.title}｜${SITE_NAME}`;
   const description = truncate(article.description || article.fallbackDescription || article.title, 120);
   const rel = `blog/${article.slug}/`;
   const ogImage = article.coverFile ? imageUrl(site, `${rel}${article.coverFile}`) : imageUrl(site, 'og-image.png');
