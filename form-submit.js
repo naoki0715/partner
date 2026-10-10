@@ -170,7 +170,9 @@
     if (head) {
       var lines = head.querySelectorAll('p');
       for (var i = 0; i < lines.length; i++) {
-        if (lines[i].textContent.indexOf('1営業日以内') !== -1) lines[i].style.display = 'none';
+        var t = lines[i].textContent;
+        // 「＼ 30秒で完了 ／」は送信後には不要なので隠す
+        if (t.indexOf('1営業日以内') !== -1 || t.indexOf('30秒で完了') !== -1) lines[i].style.display = 'none';
       }
     }
   }
