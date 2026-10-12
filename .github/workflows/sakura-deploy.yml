@@ -22,7 +22,7 @@ jobs:
           # 【重要】さくらインターネットの転送先フォルダを指定
           # 例：さくら側で「subdomain」という公開フォルダを設定した場合は以下のようになります。
           # ご自身がさくらで設定したフォルダ名に合わせて書き換えてください。
-          server-dir: /www/subdomain/
+          server-dir: www/subdomain/
           
           exclude: |
             **/.git*
