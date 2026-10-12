@@ -3,7 +3,7 @@ name: Deploy to Sakura Internet
 on:
   push:
     branches:
-      - main
+      - main  # または master
 
 jobs:
   web-deploy:
@@ -19,11 +19,10 @@ jobs:
           username: ${{ secrets.FTP_USERNAME }}
           password: ${{ secrets.FTP_PASSWORD }}
           
-          # 【重要】さくらインターネットの転送先フォルダを指定
-          # 例：さくら側で「subdomain」という公開フォルダを設定した場合は以下のようになります。
-          # ご自身がさくらで設定したフォルダ名に合わせて書き換えてください。
-          server-dir: www/subdomain/
+          # 【重要】通信を暗号化（FTPS）して安定させる
+          protocol: ftps
           
+          server-dir: www/subdomain/
           exclude: |
             **/.git*
             **/.git*/**
