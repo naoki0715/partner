@@ -1,0 +1,29 @@
+name: Deploy to Sakura Internet
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  web-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+      
+      - name: FTP Deploy
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+        with:
+          server: ${{ secrets.FTP_SERVER }}
+          username: ${{ secrets.FTP_USERNAME }}
+          password: ${{ secrets.FTP_PASSWORD }}
+          
+          # 【重要】さくらインターネットの転送先フォルダを指定
+          # 例：さくら側で「subdomain」という公開フォルダを設定した場合は以下のようになります。
+          # ご自身がさくらで設定したフォルダ名に合わせて書き換えてください。
+          server-dir: /www/subdomain/
+          
+          exclude: |
+            **/.git*
+            **/.git*/**
