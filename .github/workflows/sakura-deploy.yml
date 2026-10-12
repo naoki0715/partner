@@ -19,9 +19,6 @@ jobs:
           username: ${{ secrets.FTP_USERNAME }}
           password: ${{ secrets.FTP_PASSWORD }}
           
-          # 【重要】通信を暗号化（FTPS）して安定させる
-          protocol: ftps
-          
           server-dir: www/subdomain/
           exclude: |
             **/.git*
