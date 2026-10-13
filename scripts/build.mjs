@@ -16,11 +16,11 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createAssetStore } from './lib/assets.mjs';
-import { readArticleFiles, selectArticles } from './lib/articles.mjs';
+import { parseDate, parseFrontMatter, readArticleFiles, selectArticles } from './lib/articles.mjs';
 import { firstParagraphText, renderMarkdown } from './lib/markdown.mjs';
 import { prerenderLanding } from './prerender.mjs';
 import { buildFeed, buildRobots, buildSitemap } from './lib/seo.mjs';
-import { articlePage, blogIndexPage, FALLBACK_BASE, SITE_NAME } from './lib/templates.mjs';
+import { articlePage, blogIndexPage, FALLBACK_BASE, SITE_NAME, staticPage } from './lib/templates.mjs';
 import { injectGa, isValidGaId } from './lib/tracking.mjs';
 import { copyPublicFiles, exists } from './lib/util.mjs';
 
@@ -76,6 +76,43 @@ export async function buildBlog({ site, contentDir, distDir, log = console, now 
   return metas;
 }
 
+/** 固定ページ（content/pages/*.md → /<slug>/）を生成して、{slug, updated} の一覧を返す */
+export async function buildPages({ site, pagesDir, distDir, log = console }) {
+  const out = [];
+  let files = [];
+  try {
+    files = (await fs.readdir(pagesDir)).filter((f) => f.endsWith('.md') && !f.startsWith('_')).sort();
+  } catch {
+    return out;
+  }
+  for (const file of files) {
+    const { data, body, error } = parseFrontMatter(await fs.readFile(path.join(pagesDir, file), 'utf8'));
+    const title = String(data.title ?? '').trim();
+    if (error || !title) {
+      log.warn(`  ・固定ページ ${file} を読み飛ばしました（${error || 'title が空です'}）`);
+      continue;
+    }
+    const slug = String(data.slug || file.replace(/\.md$/, '')).trim();
+    if (!/^[a-z0-9][a-z0-9-]*$/.test(slug) || ['blog', 'index'].includes(slug)) {
+      log.warn(`  ・固定ページ ${file}: slug が不正です（${slug}）`);
+      continue;
+    }
+    const html = await renderMarkdown(body, { assets: createAssetStore({ outDir: path.join(distDir, slug), localDir: pagesDir }), warn: (m) => log.warn(`  ・[${title}] ${m}`), headings: [] });
+    const page = {
+      title,
+      slug,
+      seoTitle: String(data.seo_title ?? '').trim(),
+      description: String(data.summary ?? '').trim(),
+      fallbackDescription: firstParagraphText(html),
+      updated: data.updated ? parseDate(data.updated) : null,
+    };
+    await fs.mkdir(path.join(distDir, slug), { recursive: true });
+    await fs.writeFile(path.join(distDir, slug, 'index.html'), staticPage({ site, page, html }));
+    out.push({ slug, updated: page.updated });
+  }
+  return out;
+}
+
 /** LPのheadに canonical / og:url / GA を反映する */
 export function finalizeLanding(html, site) {
   let out = html;
@@ -114,6 +151,10 @@ export async function main({ env = process.env, log = console } = {}) {
     log.warn(`2. ブログ: 記事フォルダ ${path.relative(ROOT, contentDir)} が無いため、ブログは生成しません`);
   }
 
+  // 2b. 固定ページ（プライバシーポリシー等）
+  const pages = await buildPages({ site, pagesDir: path.resolve(ROOT, env.PAGES_DIR || 'content/pages'), distDir, log });
+  log.log(`2b. 固定ページ生成: ${pages.map((p) => p.slug).join(', ') || 'なし'}`);
+
   // 3. LP
   const indexPath = path.join(distDir, 'index.html');
   await fs.writeFile(indexPath, finalizeLanding(await fs.readFile(indexPath, 'utf8'), site));
@@ -129,7 +170,7 @@ export async function main({ env = process.env, log = console } = {}) {
 
   // 5. SEOファイル
   if (siteUrl) {
-    await fs.writeFile(path.join(distDir, 'sitemap.xml'), buildSitemap({ siteUrl, articles }));
+    await fs.writeFile(path.join(distDir, 'sitemap.xml'), buildSitemap({ siteUrl, articles, pages }));
     await fs.writeFile(path.join(distDir, 'robots.txt'), buildRobots({ siteUrl }));
     if (blogOn) await fs.writeFile(path.join(distDir, 'feed.xml'), buildFeed({ siteUrl, articles, title: `ブログ｜${SITE_NAME}`, description: '建設DX・現場管理・パートナー営業に役立つ情報' }));
     log.log('5. sitemap.xml / robots.txt' + (blogOn ? ' / feed.xml' : '') + ' を生成');

@@ -26,7 +26,7 @@
     }
   };
 
-  var PRIVACY_URL = 'https://careecon-plus.com/privacy';
+  var PRIVACY_URL = './privacy/';
 
   var MESSAGES = {
     notReady: '現在フォームの準備中です。恐れ入りますが、しばらくしてからお試しください。',

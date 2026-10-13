@@ -9,7 +9,7 @@ import { firstParagraphText, renderMarkdown } from '../lib/markdown.mjs';
 import { buildSitemap } from '../lib/seo.mjs';
 import { gaTag, injectGa, isValidGaId } from '../lib/tracking.mjs';
 import { esc, safeUrl, toSlug } from '../lib/util.mjs';
-import { buildBlog } from '../build.mjs';
+import { buildBlog, buildPages } from '../build.mjs';
 
 const FIX = path.resolve(path.dirname(new URL(import.meta.url).pathname), '../fixtures/content/blog');
 const NOW = new Date('2026-10-10T00:00:00+09:00');
@@ -174,4 +174,20 @@ test('renderMarkdown: 日本語の文中でも **強調** が効く', async () =
   const html = await renderMarkdown('現場の**“当たり前”**を変える。これは**（注意）**です', mdCtx());
   assert.match(html, /<strong>“当たり前”<\/strong>を/);
   assert.match(html, /<strong>（注意）<\/strong>です/);
+});
+
+test('buildPages: プライバシーポリシーを /privacy/ に生成し、Juicer条項・フッターリンク・サイトマップを含む', async () => {
+  const dist = await fs.mkdtemp(path.join(os.tmpdir(), 'pages-'));
+  const quiet = { warn() {}, log() {} };
+  const pages = await buildPages({ site: { siteUrl: 'https://x.example', gaId: '' }, pagesDir: path.resolve('content/pages'), distDir: dist, log: quiet });
+  assert.deepEqual(pages.map((p) => p.slug), ['privacy']);
+  const html = await fs.readFile(path.join(dist, 'privacy/index.html'), 'utf8');
+  assert.match(html, /<h1>プライバシーポリシー<\/h1>/);
+  assert.match(html, /Juicer/);
+  assert.match(html, /href="https:\/\/juicer\.cc\/privacy\/"/);
+  assert.match(html, /kitchen\.juicer\.cc/, 'Juicerタグが入る');
+  assert.match(html, /rel="canonical" href="https:\/\/x\.example\/privacy\/"/);
+  assert.match(html, /<a href="\.\.\/privacy\/">プライバシーポリシー<\/a>/);
+  assert.doesNotMatch(html, /email protected|\[email/);
+  assert.match(buildSitemap({ siteUrl: 'https://x.example', articles: [], pages }), /https:\/\/x\.example\/privacy\//);
 });

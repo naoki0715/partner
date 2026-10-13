@@ -9,13 +9,14 @@ const xml = (s) =>
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&apos;');
 
-export function buildSitemap({ siteUrl, articles, buildDate = new Date() }) {
+export function buildSitemap({ siteUrl, articles, pages = [], buildDate = new Date() }) {
   const latest = articles.reduce((m, a) => (a.modified > m ? a.modified : m), new Date(0));
   const urls = [{ loc: `${siteUrl}/`, lastmod: ymdJst(buildDate) }];
   if (articles.length) {
     urls.push({ loc: `${siteUrl}/blog/`, lastmod: ymdJst(latest) });
     for (const a of articles) urls.push({ loc: `${siteUrl}/blog/${a.slug}/`, lastmod: ymdJst(a.modified) });
   }
+  for (const p of pages) urls.push({ loc: `${siteUrl}/${p.slug}/`, lastmod: ymdJst(p.updated || buildDate) });
   const items = urls.map((u) => `  <url>\n    <loc>${xml(u.loc)}</loc>\n    <lastmod>${u.lastmod}</lastmod>\n  </url>`).join('\n');
   return `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${items}\n</urlset>\n`;
 }

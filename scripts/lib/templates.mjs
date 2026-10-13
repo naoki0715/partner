@@ -66,7 +66,7 @@ ${body}
   <img src="${rootRel}careeconplus_logo.png" alt="CAREECON+" width="164" height="30" loading="lazy">
   <nav class="footer-nav" aria-label="フッター">
     <a href="https://branu.jp/">運営会社</a>
-    <a href="https://careecon-plus.com/privacy">プライバシーポリシー</a>
+    <a href="${rootRel}privacy/">プライバシーポリシー</a>
     <a href="https://careecon-plus.com/terms">利用規約</a>
     <a href="https://careecon-plus.com/contact">お問い合わせ</a>
   </nav>
@@ -201,4 +201,25 @@ ${ctaBand(rootRel)}`;
       }]
     : [];
   return layout({ site, rootRel, title, description, canonicalRel: rel, ogImage, ogType: 'article', jsonld: [posting, ...crumbs], body, bodyClass: 'page-article' });
+}
+
+/** 固定ページ（プライバシーポリシーなど）。content/pages/*.md から生成 */
+export function staticPage({ site, page, html }) {
+  const rootRel = '../';
+  const title = page.seoTitle || `${page.title}｜${SITE_NAME}`;
+  const description = truncate(page.description || page.fallbackDescription || page.title, 120);
+  const updated = page.updated ? `<p class="meta">最終改訂：<time datetime="${ymdJst(page.updated)}">${jaDate(page.updated)}</time></p>` : '';
+  const body = `<main class="container">
+  <nav class="breadcrumb" aria-label="パンくずリスト"><a href="${rootRel}">ホーム</a><span aria-hidden="true">›</span><span aria-current="page">${esc(page.title)}</span></nav>
+  <article class="article">
+    <header class="article-header">
+      <h1>${esc(page.title)}</h1>
+      ${updated}
+    </header>
+    <div class="prose">
+${html}
+    </div>
+  </article>
+</main>`;
+  return layout({ site, rootRel, title, description, canonicalRel: `${page.slug}/`, ogImage: imageUrl(site, 'og-image.png'), body, bodyClass: 'page-static' });
 }
